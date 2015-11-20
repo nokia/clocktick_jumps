@@ -186,67 +186,119 @@ long int* run_long_test(long int number_of_iterations, int clocktype, int n) {
         return results;
 }
 
+void print_usage() {
+    char *result;
+    asprintf(&result, "Usage:");
+    asprintf(&result, "%s \n-c clocktype: supported types are rdtsc, rdtscp, and REALTIME", result);
+    asprintf(&result, "%s \n    (REALTIME refers to the clock type in POSIX function clock_gettime)", result);
+    asprintf(&result, "%s \n-p c: pin the process to CPU number c", result);
+    asprintf(&result, "%s \n-r reporttype: report percentiles, highest, or cumulative", result);
+    asprintf(&result, "%s \n-t time_interval: how long to run each iteration (in us)", result);
+    asprintf(&result, "%s \n-i iterations: how many iterations to run", result);
+    printf(result);
+}
 
+char *clock_name_r = "REALTIME";
+char *clock_name_t = "rdtsc";
+char *clock_name_p = "rdtscp";
 
-int main(int argc, char **argv) {
-    // Usage:
-    // -c clocktype: rdtsc, rdtscp, REALTIME etc
-    // -p c: pin process to cpu c
-    // -i n: number of iterations
-    // -h: histogram - keep all measurement values and calculate percentages
-    // -l: run a long test, keep top 10 measurements
-    
+char *reporttype_name_p = "percentiles";
+char *reporttype_name_h = "highest";
+char *reporttype_name_c = "cumulatives";
+
+int parse_command_line(int argc, char **argv, \
+                char *clocktype, char **clockname, \
+                int *cpu_pin, \
+                char *reporttype, char **reportname, \
+                long int *time_interval_us, \
+                long int *iterations) {
     int opt;
-    int cpu_used = 1;
-    long number_of_iterations = 10000;
-
-    int measurement_type = 'h';
-    char *measurement_type_name = "histogram";
-
-    int clocktype = 'r';
-    char *clock_name_r = "REALTIME";
-    char *clock_name_t = "rdtsc";
-    char *clock_name_p = "rdtscp";
-    char *current_clock_name = clock_name_r;
-
-    while ((opt = getopt(argc, argv, "c:p:i:hl")) != -1) {
+    while ((opt = getopt(argc, argv, "c:p:r:t:i:")) != -1) {
         switch (opt) {
         case 'c':
-            current_clock_name = optarg;
             if (!strcmp(optarg, clock_name_r)) {
-                clocktype = 'r';
+                *clocktype = 'r';
+                *clockname = clock_name_r;
             } else if (!strcmp(optarg, clock_name_t)) {
-                clocktype = 't';
+                *clocktype = 't';
+                *clockname = clock_name_t;
             } else if (!strcmp(optarg, clock_name_p)) {
-                clocktype = 'p'; 
+                *clocktype = 'p'; 
+                *clockname = clock_name_p;
             } else {
                 printf("Unknown clock type %s", optarg);
-                exit(-1);
+                return(-1);
             }
             break;
         case 'p':
-            cpu_used = atoi(optarg);
+            *cpu_pin = atoi(optarg);
+            if (*cpu_pin < 0 || *cpu_pin > 1024) {
+                printf("CPU pin %s out of range", optarg);
+                return -1;
+            }
+            break;
+        case 'r':
+            if (!strcmp(optarg, reporttype_name_p)) {
+                *reporttype = 'p';
+                *reportname = reporttype_name_p;
+            } else if (!strcmp(optarg, reporttype_name_h)) {
+                *reporttype = 'h';
+                *reportname = reporttype_name_h;
+            } else if (!strcmp(optarg, reporttype_name_c)) {
+                *reporttype = 'c';
+                *reportname = reporttype_name_c;
+            } else {
+                printf("Unknown report type %s", optarg);
+                return -1;
+            }
+            break;
+        case 't':
+            *time_interval_us = atol(optarg);
+            if (*time_interval_us < 0 || *time_interval_us == 0) {
+                printf("Invalid time interval %s", optarg);
+                return -1;
+            }
             break;
         case 'i':
-            number_of_iterations = atoi(optarg);
-            break;
-        case 'h':
-            measurement_type = 'h';
-            measurement_type_name = "histogram";
-            break;
-        case 'l':
-            measurement_type = 'l';
-            measurement_type_name = "long run";
+            *iterations = atol(optarg);
+            if (*iterations < 0 || *iterations == 0) {
+                printf("Invalid number of iterations %s", optarg);
+                return -1;
+            } 
             break;
         default: /* '?' */
-            fprintf(stderr, "Usage: %s [-t nsecs] [-n] name\n", argv[0]);
-            exit(EXIT_FAILURE);
+            print_usage();
+            return -1;
         }
+    return 0; // everything cool&
     }
+}
+
+int main(int argc, char **argv) {
+    // Default values
+    char clocktype = 'r';
+    char *clockname = clock_name_r;
+    int cpu_pin = 1;
+    char reporttype = 'p';
+    char *reportname = reporttype_name_p;
+    long int time_interval_us = 1000000; // one second
+    long int iterations = 1;
+  
+    int r = parse_command_line(argc, argv, \
+                &clocktype, &clockname, \
+                &cpu_pin, \
+                &reporttype, &reportname, \
+                &time_interval_us, \
+                &iterations);
+    if (r < 0) {
+            printf("Parsing command line arguments failed\n");
+            exit(EXIT_FAILURE);
+    }
+
     printf("\nRunning test %s with clock %s for %li iterations while pinning to processor %i\n", \
-                    measurement_type_name, \
-                    current_clock_name, \
-                    number_of_iterations, \
+                    reporttype, \
+                    clockname, \
+                    iterations, \
                     cpu_used);
     
     if (clocktype == 'r') {

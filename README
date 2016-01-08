@@ -1,0 +1,51 @@
+README
+=======
+
+1. Installation 
+
+See the makefile:
+- make cj will compile the program
+- make test will run unit tests
+
+
+2. Operation
+
+The test application is written in C and it runs in a tight loop and reads a clock value in every iteration. The clock can be the POSIX
+standard get_clocktime function or the time-stamp counter (tsc) in the processor. There is a shell script that runs the
+C program and checks some basic facts, like that the tsc counter is monotonous.
+
+The theory behind this is that if the clock increases monotonously and does not do sudden jumps, then any jumps must
+come from the program not being allowed to run. There are several ways this can happen:
+
+- System Management Interrupts (SMIs): These override any other activies and there is no way to avoid them. They are part of
+  the Intel architecture. The number and duration of SMIs depend on the BIOS of the server.
+
+- Other processes running on the same core: These are avoided in the guest system by isolating the CPU cores where the
+  application runs, and pinning the test program to an isolated core. Isolation means that the Linux scheduler does not
+run any other tasks on the same core.
+
+- Scheduler interrupts. This is minimized with the guest kernel boot option "nohz_full"
+  which rep
+
+- Interprocessor interrupts
+
+- Memory access failures
+
+
+
+-----------------
+
+1. The main loop is the following:
+          next = (read tsc counter value)
+          cpuid
+          diff = next - prev
+          prev = next
+The diff is then used for various purposes. Tsc counter is read with rdtsc or rdtscp, as desired. Cpuid is to serialize the reading of tsc counter.
+The theory is that if the hardware or VI is doing something strange, then the program is not getting runtime and the tsc counter value will jump. Hence the name "clocktick jumps".
+
+2. How to measure "cumulative misses" is open to discussion. Currently, the code does the following:
+- It runs the loop for time_interval and counts how many times it can loop.
+- The average runtime is the "baseline"
+- Running for time_interval, every time the clocktick jumps more than baseline, the value is added to a counter.
+
+The baseline could reasonably be calculated differently (2*average, medium, 99.9 percentile).

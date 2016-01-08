@@ -4,25 +4,20 @@
 #include <stdio.h>
 #include <sched.h>
 #include <string.h>
-#include <time.h>
 #include <stdlib.h>
 #include <assert.h>
-#include <stdint.h>
 #include <errno.h>
 #include <sys/resource.h>
-#include <sys/time.h>
 #include "clocktick_jumps.h"
 
 #ifdef UNIT_TESTING
 // Redefine main since unit tests have their own main
 int example_main(int argc, char **argv);
+long int mock_get_timevalue(bool);
 #define main example_main
 #endif  // UNIT_TESTING
 
-
 double percentiles[] = {0.50, 0.9, 0.99, 0.999, 0.9999, 0.99999, 0.999999};
-
-const long int one_million = 1000000;
 
 char const *clock_name_r = "REALTIME";
 char const *clock_name_t = "rdtsc";
@@ -30,7 +25,7 @@ char const *clock_name_p = "rdtscp";
 
 char const *reporttype_name_p = "percentiles";
 char const *reporttype_name_h = "highest";
-char const *reporttype_name_c = "cumulatives";
+char const *reporttype_name_c = "cumulative";
 
 struct command_line_arguments default_arguments = {
     .clocktype = 'r',\
@@ -41,8 +36,6 @@ struct command_line_arguments default_arguments = {
     .time_interval_us = 1000000,\
     .iterations = 1
 };
-
-
 
 long int s2ns(long int secs) {
     return (long int) 1e9 * secs;
@@ -139,79 +132,103 @@ void print_ns_and_cyc_if_needed(long int ns, int clocktype) {
     printf(" ns\n");
 }
 
-long int* run_histogram_test(long int number_of_iterations, int clocktype) {
-        long int *results = malloc(number_of_iterations * sizeof(long int));
-        if (clocktype == 'r') {
-            struct timespec tp, tp_previous;
-            clock_gettime(CLOCK_REALTIME, &tp_previous);
-            for (long int i = 0; i < number_of_iterations; i++) {
-	            clock_gettime(CLOCK_REALTIME, &tp);
-                results[i] = (long int) tp.tv_nsec - tp_previous.tv_nsec;
-                tp_previous.tv_nsec = tp.tv_nsec;
+long int get_timevalue(int const clocktype) {
+    if (clocktype == 'r') {
+        return get_clock_realtime();
+    } else if (clocktype == 't') {
+       return cpu_get_real_ticks();
+    } else if (clocktype == 'p') {
+        return get_tsc();
+    } 
+
+#ifdef UNIT_TESTING
+    if (clocktype == 'm') {
+        return mock_get_timevalue(false);
+    }
+#endif //UNIT_TESTING 
+
+    printf("Unknown clocktype in get_timevalue, exiting");
+    exit(-1);
+}
+
+long int get_timevalue_in_ns(int const clocktype) {
+    if (clocktype == 'r') {
+        return get_clock_realtime();
+    } else if (clocktype == 't') {
+        long int ticks = get_timevalue('t');
+        return cyc2ns(ticks, 't');
+    } else if (clocktype == 'p') {
+        long int ticks = get_timevalue('p');
+        return cyc2ns(ticks, 'p');
+    }
+
+#ifdef UNIT_TESTING
+    if (clocktype == 'm') {
+        return get_timevalue('m');
+    }
+#endif //UNIT_TESTING    
+ 
+    printf("Unknown clock type in get_timevalue_in_us\n");
+    exit(-1);
+}
+
+
+long int* run_percentile_test(long int number_of_iterations, int const clocktype) {
+    // malloc is ok since we will overwrite the memory
+    long int *results = malloc(number_of_iterations * sizeof(long int));
+    long int prev, next;
+    prev = get_timevalue(clocktype);
+    for (long int i = 0; i < number_of_iterations; i++) {
+        next = get_timevalue(clocktype);
+        results[i] = (long int) next - prev;
+        prev = next;
+    }
+    return results;
+}
+
+long int* run_highest_test(long int number_of_iterations, int clocktype, int n) {
+        long int prev, next, diff;
+        long int *results = calloc(n, sizeof(long int));
+        prev = get_timevalue(clocktype);
+        for (long int i = 0; i < number_of_iterations; i++) {
+	        next = get_timevalue(clocktype); 
+            diff = next - prev;
+            prev = next;
+            if (diff > results[0]) {  // results[0] is the smallest value of the 10
+                results[0] = diff;
+                qsort(results, n, sizeof(long int), &int_comparison);
             }
-        } else if (clocktype == 't') {
-           int64_t prev = cpu_get_real_ticks();
-            for (long int i = 0; i < number_of_iterations; i++) {
-                int64_t cur = cpu_get_real_ticks();
-	            results[i] = (long int) cur - prev;
-                prev = cur;
-            }
-        } else if (clocktype == 'p') {
-           int64_t prev = get_rdtscp();
-            for (long int i = 0; i < number_of_iterations; i++) {
-                int64_t cur = get_rdtscp();
-	            results[i] = (long int) cur - prev;
-                prev = cur;
-            }
-        } else {
-            printf("clocktype wrong in run_histogram_tests, quitting\n");
-            exit(-1);
         }
         return results;
 }
 
-long int* run_long_test(long int number_of_iterations, int clocktype, int n) {
-        long int diff;
-        long int *results = malloc(n * sizeof(long int));
-        if (clocktype == 'r') {
-            struct timespec tp, tp_previous;
-            clock_gettime(CLOCK_REALTIME, &tp_previous);
-            for (long int i = 0; i < number_of_iterations; i++) {
-	            clock_gettime(CLOCK_REALTIME, &tp);
-                diff = (long int) tp.tv_nsec - tp_previous.tv_nsec;
-                tp_previous.tv_nsec = tp.tv_nsec;
-                if (diff > results[0]) {  // results[0] is the smallest value of the 10
-                        results[0] = diff;
-                        qsort(results, n, sizeof(long int), &int_comparison);
+long int* run_cumulative_test_with_baseline(long int number_of_iterations, long int time_interval, long int baseline, int const clocktype) {
+        long int start, prev, next;
+        long int *results = calloc(number_of_iterations, sizeof(long int));
+
+        for (long int i = 0; i < number_of_iterations; i++) {
+            start = get_timevalue_in_ns(clocktype);
+            prev = start;
+            while( (next=get_timevalue_in_ns(clocktype)) - start <= time_interval ) {
+                long int diff = next - prev;
+                prev = next;
+                if (diff > baseline) {
+                    results[i] += (diff-baseline);
                 }
             }
-        } else if (clocktype == 't') {
-            int64_t prev = cpu_get_real_ticks();
-            for (long int i = 0; i < number_of_iterations; i++) {
-                int64_t cur = cpu_get_real_ticks();
-	            diff = (long int) cur - prev;
-                prev = cur;
-                if (diff > results[0]) {
-                        results[0] = diff;
-                        qsort(results, n, sizeof(long int), &int_comparison);
-                }
-            }
-         } else if (clocktype == 'p') {
-            int64_t prev = get_rdtscp();
-            for (long int i = 0; i < number_of_iterations; i++) {
-                int64_t cur = get_rdtscp();
-	            diff = (long int) cur - prev;
-                prev = cur;
-                if (diff > results[0]) {
-                        results[0] = diff;
-                        qsort(results, n, sizeof(long int), &int_comparison);
-                }
-            }
-        } else {
-            printf("clocktype wrong in run_long_test, quitting\n");
-            exit(-1);
         }
         return results;
+}
+
+long int* run_cumulative_test(long int number_of_iterations, long int time_interval, int const clocktype) {
+    long int baseline;
+    long int count=0;
+    long int start = get_timevalue_in_ns(clocktype);
+    while ( get_timevalue_in_ns(clocktype) - start < time_interval) {
+            count++;
+    }
+    baseline = (long int) time_interval/(long double) count;
+    return run_cumulative_test_with_baseline(number_of_iterations, time_interval, baseline, clocktype);
 }
 
 void print_usage() {
@@ -221,7 +238,7 @@ void print_usage() {
     asprintf(&result, "%s \n    (REALTIME refers to the clock type in POSIX function clock_gettime)", result);
     asprintf(&result, "%s \n-p c: pin the process to CPU number c", result);
     asprintf(&result, "%s \n-r reporttype: report percentiles, highest, or cumulative", result);
-    asprintf(&result, "%s \n-t time_interval: how long to run each iteration (in us)", result);
+    asprintf(&result, "%s \n-t time_interval: how long to run each iteration (in us) for cumulative test", result);
     asprintf(&result, "%s \n-i iterations: how many iterations to run", result);
     printf(result);
 }
@@ -313,10 +330,7 @@ int main(int argc, char **argv) {
     }
 
     printf("\nRunning test %s with clock %s for %li iterations while pinning to processor %i\n", \
-                    *cl.reportname, \
-                    *cl.clockname, \
-                    cl.iterations, \
-                    cl.cpu_pin);
+        *cl.reportname, *cl.clockname, cl.iterations, cl.cpu_pin);
     
     if (cl.clocktype == 'r') {
         struct timespec res;
@@ -326,7 +340,7 @@ int main(int argc, char **argv) {
         printf("tsc values are in units of clock ticks\n");
     }
 
-    // Pin process to CPU cpu_used
+    // Pin process to CPU cpu_pin
     const int this_process_id = 0;    
     cpu_set_t set;
     CPU_ZERO(&set);
@@ -344,10 +358,10 @@ int main(int argc, char **argv) {
     struct timecounter start, end;
 
     get_timecounter(&start);
-    if (cl.reporttype == 'h') {
+    if (cl.reporttype == 'p') {
         long int iterations = cl.iterations;
         char clocktype = cl.clocktype;
-        long int *results = run_histogram_test(iterations, cl.clocktype);
+        long int *results = run_percentile_test(iterations, cl.clocktype);
         get_timecounter(&end);
    
         // Analyze results
@@ -371,8 +385,8 @@ int main(int argc, char **argv) {
                 printf("%f : ", percentiles[i]);
                 print_ns_and_cyc_if_needed(results[index_for_percentile], cl.clocktype);
         }   
-    } else if (cl.reporttype == 'l') {
-        long int *results = run_long_test(cl.iterations, cl.clocktype, 10);
+    } else if (cl.reporttype == 'h') {
+        long int *results = run_highest_test(cl.iterations, cl.clocktype, 10);
         get_timecounter(&end);
         
         printf("Largest 10 values are:\n");

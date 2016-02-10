@@ -1,0 +1,69 @@
+#! /usr/bin/zsh
+
+cpu_pin=2
+c=rdtscp
+
+echo ~~~
+
+echo "Running scheduler tests on `date`"
+echo
+
+echo "OS version is"
+cat /etc/os-release
+echo
+echo "Kernel command line:"
+cat /proc/cmdline
+echo
+echo "Kernel version is"
+uname -a
+echo
+echo "Online cpus are"
+cat /sys/devices/system/cpu/online
+echo
+echo "nohz cpus are "
+cat /sys/devices/system/cpu/nohz_full
+echo
+echo "Isolated cpus are"
+cat /sys/devices/system/cpu/isolated
+echo
+echo "Clocksource is"
+cat /sys/devices/system/clocksource/clocksource*/current_clocksource
+echo 
+
+if [[ `grep rdtscp /proc/cpuinfo` ]]; then
+        echo "rdtscp is supported"
+else
+        echo "rdtscp not supported"
+        c=rdtsc
+fi
+
+if [[ `grep constant_tsc /proc/cpuinfo` ]]; then
+        echo "Constant tsc is supported"
+fi
+
+if [[ `grep nonstop_tsc /proc/cpuinfo` ]]; then
+        echo "Nonstop tsc is supported"
+fi
+
+echo "RCU threads are running on CPUs" $(ps -eo args,psr | awk ' $1 ~/rcu/ {print $2}' | sort -u)
+
+echo "Compare REALTIME and tsc counter values and get some histograms."
+echo "All cpus should look the same"
+
+for p in 1 2 3; do
+        ./cj -r percentiles -i 1000000 -p $p -c REALTIME
+        ./cj -r percentiles -i 1000000 -p $p -c $c
+done
+
+echo
+echo "Run highest test with REALTIME and rdtsc"
+echo "----------------------------------------"
+
+./cj -r highest -i 10000000000 -c $c -p $cpu_pin
+
+echo
+echo "Run cumulative test for one million iterations, report for 100 ms"
+echo "------------------------------------------------------------------"
+./cj -r cumulative -i 1000000 -p $cpu_pin -t 100000000
+
+echo ~~~

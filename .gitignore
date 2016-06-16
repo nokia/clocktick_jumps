@@ -1,0 +1,17 @@
+##################
+# Editor backups #
+##################
+*.swo
+*.swp
+
+
+####################
+# Makefile outputs #
+####################
+
+cj
+cj2
+cj_static
+test_it
+
+

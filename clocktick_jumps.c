@@ -49,7 +49,7 @@ struct command_line_arguments default_arguments = {
     .reporttype = 'p',\
     .reportname = &reporttype_name_p,\
     .time_interval_ns = one_million,\
-    .iterations = 1
+    .iterations = 10
 };
 
 int64_t s2ns(int64_t const secs) {

@@ -140,3 +140,6 @@ The results are also a little different for different compilers.
 
 :penguin:
 
+# License
+
+This project is licensed under the BSD-3-Clause license - see the [LICENSE](LICENSE).

@@ -1,3 +1,9 @@
+/*
+ * Copyright 2020 Nokia
+ * Licensed under the BSD 3-Clause License.
+ * SPDX-License-Identifier: BSD-3-Clause
+*/
+
 #define _GNU_SOURCE
 #include "/usr/include/sys/io.h"
 #include <unistd.h>
